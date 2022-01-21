@@ -1,0 +1,521 @@
+---
+title: "Linear Regression"
+date: "19/01/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this tutorial, we will look at the ways, you can perform a linear regression with R. We will make use of the earnings data, found in the data folder (data/Earnings.csv). This data set is from an american national survey in 1990 with 1816 respondents. Let's load in the data and have a look at the variables
+
+```{r load_data, message=F, warning=F}
+library(tidyverse)
+
+earn <- read_csv('data/Earnings.csv')
+
+glimpse(earn)
+```
+We see there are `r nrow(earn)` observations and `r ncol(earn)` variables in the data. It's good practice to get a feel for what is contained in the data through descriptive statistics. 
+
+
+```{r load_data2, message=F, warning=F}
+summary(earn)
+```
+
+### Summarizing missing data
+
+We will write a function to count the number of missing values in a vector and apply it to each variable
+
+```{r}
+
+count_missing <- function(x) {
+  
+  return(sum(is.na(x)))
+  
+}
+
+earn %>% 
+  summarize_all(count_missing) %>% 
+  DT::datatable(options = list(scrollX = T))
+```
+
+### Counts and proportions
+
+We often want to produce counts and proportions for variables as well.
+
+```{r}
+categorical_variables <- c("ethnicity", 
+                           "education",
+                           "mother_education",
+                           "father_education",
+                           "walk",
+                           "exercise",
+                           "smokenow",
+                           "tense")
+
+
+count_data_string <- function(data, string_var) {
+  data %>%
+    count(!!rlang::sym(string_var)) %>% 
+    mutate(proportion = n/sum(n))
+}
+
+
+count_data_var <- function(data, count_var) {
+  data %>%
+    count({{ count_var }}) %>% 
+    mutate(proportion = n/sum(n))
+}
+
+
+tabs <- lapply(categorical_variables, function(x) {
+  count_data_string(earn, x)
+})
+
+tabs
+```
+
+
+### Table one
+
+Sometimes we want to summarize all of our descriptive values in a single table. The `tableone` package is great for this purpose. 
+
+```{r}
+library(tableone)
+# all data as continuous
+CreateTableOne(data = earn)
+
+# use categorical variables
+CreateTableOne(data = earn, factorVars = categorical_variables)
+```
+
+
+## Regression methods in R
+
+We will slowly build up a regression model using some common functions. 
+
+```{r}
+
+earn %>% 
+  ggplot(aes(height, weight)) +
+  geom_point() +
+  ggtitle("Plot of height vs weight")
+
+
+earn %>% 
+  ggplot(aes(height, weight)) +
+  geom_point() +
+  geom_smooth(method="lm")
+  ggtitle("Plot of height vs weight",
+          subtitle = "With regression line")
+
+```
+
+
+### Simple linear model
+
+
+There are several ways of running a regression model in R. We can use the base `lm` method, or the `glm` method which we will look at in detail when  we make generalized linear models.
+
+```{r}
+# method 1 : linear model
+slm <- lm(weight ~ height, data = earn)
+
+print(summary(slm))
+
+
+# method 2: genearlized linear model
+slm2 <- glm(weight ~ height, family = "gaussian", data = earn) 
+
+print(summary(slm2))
+```
+
+Nice printing methods
+
+
+```{r}
+# method 1 : linear model
+sjPlot::tab_model(slm)
+
+
+# method 2: genearlized linear model
+sjPlot::tab_model(slm2)
+```
+
+
+### Generate a simple prediction manually
+
+Let's generate a prediction for someone who is 55 inches tall
+
+```{r}
+new_height <- 55
+
+# extract the coefficients
+coefs_slm <- coef(slm)
+print(coefs_slm)
+
+# calculate prediction
+predicted_weight <- coefs_slm[1] + coefs_slm[2]*new_height
+
+print(predicted_weight)
+
+```
+
+### Generate simple prediction with predict method
+
+We can also use the `predict` method to generate a prediction. We need to pass a data.frame containing the new predictor variables. 
+
+
+```{r}
+new_height <- data.frame(height=55)
+
+
+# calculate prediction
+predicted_weight <- predict(slm, new_height)
+
+print(predicted_weight)
+
+# calculate prediction with the glm object
+predicted_weight <- predict(slm2, new_height)
+
+
+
+```
+
+
+### Working with `lm` objects
+
+When working with a new object in R, it's good practice to look at its structure and see what is available to you. The functions `str` and `names` are perfect for this.
+
+```{r}
+# the object structure
+print(str(slm))
+
+# the object names
+print(names(slm))
+
+```
+
+we can see for example that this object contains both the fitted values and residuals. We could calculate these by hand if we wanted and verify that they hold the same values as what is in the model object.
+
+```{r}
+# generating fitted values (removing NA's for comparison)
+fitted_values_calc <- predict(slm, earn %>% filter(!is.na(height), !is.na(weight)))
+
+# comparing the calculation against the vector stored in the model object
+all.equal(as.vector(fitted_values_calc), as.vector(slm$fitted.values))
+
+# generating residuals
+y <- earn %>% 
+  filter(!is.na(height), !is.na(weight)) %>% 
+  pull(weight)
+residuals_calc <- y - fitted_values_calc
+all.equal(as.vector(residuals_calc), as.vector(slm$residuals))
+  
+
+```
+
+
+### Extracting model fit
+
+We can pull model fit statistics, $R^2$, $RMSE$, and test statistics (F statistic), as well as uncertainty estimates ($\sigma$) from the model summary object
+
+```{r}
+model_summary <- summary(slm)
+
+
+# r squared
+model_summary$r.squared
+
+# adjusted r-squred
+model_summary$adj.r.squared
+
+# f statistic
+model_summary$fstatistic
+
+```
+
+We can also extract the model AIC using the `AIC()` function and BIC using the `BIC()` function
+
+```{r}
+AIC(slm)
+BIC(slm)
+```
+
+
+## Simulating data for regression
+
+Often we want to simulate data to model assumptions we may have about a potential project. Here I demonstrate how to simulate data for the following model
+
+$$Y = 25 + 7.2*x + \epsilon, \epsilon \sim N(0, 15)$$
+
+```{r}
+simulate_simple_reg_data = function(sample_size = 500,
+                                    intercept = 0, 
+                                    slope = 0,
+                                    sigma = 0) {
+  x = runif(n = sample_size) * 5
+  y = intercept + slope * x + rnorm(n = sample_size, mean = 0, sd = sigma)
+  data.frame(x, y)
+}
+
+sim_df <- simulate_simple_reg_data(intercept = 25, slope = 7.2, sigma = 15)
+
+sim_df %>% 
+  ggplot(aes(x, y)) +
+  geom_point() +
+  geom_smooth(method="lm") +
+  labs(title = "Simulated data for regression")
+
+```
+
+### Residuals vs fitted
+
+Let's look at a residual vs fitted data plot to check for contstant variance
+
+```{r}
+model_fit <- lm(y~ x, data = sim_df)
+
+sim_df %>% 
+  mutate(fitted_values = predict(model_fit, sim_df),
+         residuals = y - fitted_values) %>% 
+  ggplot(aes(fitted_values, residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, size = 1) +
+  labs(x = "fitted values from regression",
+       y = 'residuals',
+       title = "Regression diagnostic plot of fitted values vs residuals")
+
+```
+
+What are we looking at in this plot?
+
+First, the residuals should be centered around the horizontal line at 0. If this is the case, then the linearity assumption likely holds true. The second thing we would like to see is that the spread of the points is even for every value of x. 
+
+
+What would a plot with uneven variance look like? Let's simuate data like above, but let's make the variance = $x^2$.
+
+```{r}
+
+simulate_unequal_var_data = function(sample_size = 500,
+                                    intercept = 0, 
+                                    slope = 0) {
+  x = runif(n = sample_size) * 5
+  y = intercept + slope * x + rnorm(n = sample_size, mean = 0, sd = x)
+  data.frame(x, y)
+}
+
+sim_bad_var_df <- simulate_unequal_var_data(intercept = 25, slope = 7.2)
+
+model_fit_enequal_var <- lm(y~ x, data = sim_bad_var_df)
+
+sim_bad_var_df %>% 
+  mutate(fitted_values = predict(model_fit_enequal_var, sim_bad_var_df),
+         residuals = y - fitted_values) %>% 
+  ggplot(aes(fitted_values, residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, size = 1) +
+  labs(x = "fitted values from regression",
+       y = 'residuals',
+       title = "Regression diagnostic plot of fitted values vs residuals")
+
+```
+
+
+How about a model violating the linearity assumption? We can simulate that as well
+
+```{r}
+
+simulate_nonlinear_data = function(sample_size = 500,
+                                    intercept = 0, 
+                                    slope = 0,
+                                   sigma = 1) {
+  x = runif(n = sample_size) * 5
+  y = intercept + slope * x^2 + rnorm(n = sample_size, mean = 0, sd = sigma)
+  data.frame(x, y)
+}
+
+sim_nonlinear_df <- simulate_nonlinear_data(intercept = 25, slope = 7.2, sigma = 10)
+
+model_fit_nonlin <- lm(y~ x, data = sim_nonlinear_df)
+
+sim_nonlinear_df %>% 
+  mutate(fitted_values = predict(model_fit_nonlin, sim_nonlinear_df),
+         residuals = y - fitted_values) %>% 
+  ggplot(aes(fitted_values, residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, size = 1) +
+  labs(x = "fitted values from regression",
+       y = 'residuals',
+       title = "Regression diagnostic plot of fitted values vs residuals")
+
+```
+
+Here we see that the variance spread looks reasonable, but there is clearly a non-linear relationship between the x and y variables. 
+
+
+### Residual and QQ plots
+
+We can also look at histograms of residuals, and QQ plots to check for normality.
+
+```{r}
+model_fit <- lm(y~ x, data = sim_df)
+
+sim_df %>% 
+  mutate(fitted_values = predict(model_fit, sim_df),
+         residuals = y - fitted_values) %>% 
+  ggplot(aes(residuals)) +
+  geom_histogram() +
+  labs(x = "residuals",
+       title = "Regression diagnostic plot showing distribution of residuals")
+
+sim_nonlinear_df %>% 
+  mutate(fitted_values = predict(model_fit_nonlin, sim_df),
+         residuals = y - fitted_values) %>% 
+  ggplot(aes(residuals)) +
+  geom_histogram() +
+  labs(x = "residuals",
+       title = "Regression diagnostic plot showing distribution of residuals",
+       subtitle = "simulated from a non-linear model")
+
+
+```
+
+We can also generate quantile quantile plots
+
+
+```{r}
+sim_df %>% 
+  mutate(fitted_values = predict(model_fit, sim_df),
+         residuals = y - fitted_values) %>% 
+  ggplot(aes(sample = residuals))+
+  stat_qq() +
+  stat_qq_line()
+
+sim_nonlinear_df %>% 
+  mutate(fitted_values = predict(model_fit_nonlin, sim_df),
+         residuals = y - fitted_values) %>% 
+  ggplot(aes(sample = residuals))+
+  stat_qq() +
+  stat_qq_line()
+```
+
+
+We can also formally test the normality of residuals with a **shapiro-wilks test**
+
+
+```{r}
+shapiro.test(resid(model_fit))
+shapiro.test(resid(model_fit_nonlin))
+```
+
+
+## Models with more than one input
+
+Let's return to our height/weight example and add another input variable
+
+
+```{r}
+
+multi_lm <- lm(weight ~ height + male, data = earn)
+sjPlot::tab_model(multi_lm)
+```
+
+
+How do we interpret the coefficients?
+
+- The intercept is the expected weight of a female with a height of zero (not very helpful).
+- The height coefficient interpretation is, for two people of the same sex, but who differ by one inch, there is an expected increase of 3.89 pounds. 
+- The male coefficient states that for two people who have the same height, a male is expected to weigh 11.84 pounds more than a female. 
+
+What if I interpret this model to say: If I can an inch in height, I should expect to weigh 3.89 more pounds. Is this correct?
+
+NO! The model coefficients are interpreted between people. This is not a within person model. 
+
+### Prediction with confidence intervals
+
+We can add an argument to our predict method to get predictions with confidence intervals. Let's generate a prediction for a 70 inch male.
+
+
+```{r}
+new_data <- data.frame(height = 70, male = 1)
+predict(multi_lm, newdata = new_data, interval = "confidence", level = .95)
+
+```
+
+We would expect them to weigh 176.924 with a 95% confidence interval of 174.7588 to 179.0893.
+
+
+
+### Centering predictors
+
+Our intercept isn't very helpful in it's current state. Let's center this variable by subtracting its mean, and then re-running the regression.
+
+
+```{r}
+
+earn <- earn %>% 
+  mutate(height_center = height - mean(height))
+multi_lm <- lm(weight ~ height_center + male, data = earn)
+sjPlot::tab_model(multi_lm)
+```
+
+Our height and male coefficients have not changed, however our intercept now makes a lot more sense. It's interpretation is now:
+
+- The expected weight for a non-male of average height
+
+
+Let's add the ethnicity variable to this model
+
+```{r}
+
+earn <- earn %>% 
+  mutate(height_center = height - mean(height))
+multi_lm2 <- lm(weight ~ height_center + male + factor(ethnicity), data = earn)
+sjPlot::tab_model(multi_lm2)
+```
+
+Notice how we now have 3 more coefficients, not just one. Also remember that the ethnicity variable has 4 values, not 3 (Black, Hispanic, White, Other). The function `factor()` has chosen a reference alphabetically. 
+
+What are the interpretations of these coefficients?
+
+- The intercept is the expected weight of a Black woman of average height
+- The height_center coefficient is the expected change in height for people who differ in height by 1 inch and who are equal on all other variables.
+- The male coefficient is 
+
+
+
+### Fit statistics
+
+In class we talked about $R^2$ and how it can be used to understand explained variance in a model. We also looked at how we can artificially inflate it by adding more variables. Let's do a short simulation study to look at this. Below I build a data set that has 300 variables that are randomly generated from a standard normal distribution ($N(0, 1)$). The outcome y has the same distribution. Therefore, there should be no relationship between and X variable and the y variable. 
+
+We are going to, successively, build models adding one variable at a time, and save both the r-squared and the adjusted r-squared. 
+
+```{r}
+n_row <- 1000
+n_col <- 300
+y <- rnorm(n_row)
+
+X <- matrix(data = NA, nrow = n_row, ncol = n_col, byrow = FALSE,
+            dimnames = NULL)
+for(i in 1:n_col) {
+  X[,i] <- rnorm(n_row)
+}
+
+r_squared_sim  <- purrr::map_df(1:n_col, function(x) {
+   model_fit <- lm(y ~ X[, 1:x])
+   tibble(number_covariates = x,
+          r_squared = summary(model_fit)$r.squared,
+          adj_r_squared = summary(model_fit)$adj.r.squared)
+})
+
+r_squared_sim %>% 
+  ggplot(aes(number_covariates, r_squared, col = "R-Squared")) +
+  geom_line()+
+  geom_line(aes(number_covariates, adj_r_squared, col = "Adjusted R-Squared"))
+```
+We can see how the $R^2$ is increased every time we add a variable (which is unrelated to the outcome!), while the adjusted $R^2$ remains low

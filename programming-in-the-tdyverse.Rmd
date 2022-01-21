@@ -1,0 +1,164 @@
+---
+title: "Programming in the tidyverse"
+date: "19/01/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Tidy evaluation
+
+We have seen a few verbs from the dplyr universe in our first tutorial (e.g. `summarize()`, `group_by()`). These functions usually take a `data.frame` or `tibble` as their first argument and then perfom some operation on that data. The most commonly used `dplyr` verbs are:
+
+
+- `select()` - for counting selecting a set of variables in a `tibbble`/`data.frame`
+- `filter()` - for subsetting a `tibbble`/`data.frame` based on some logical condition(s)
+- `group_by()` - for grouping  a `tibbble`/`data.frame` by one or more variables, usually before performing some further actions (summarizing or creating new variables)
+- `mutate()` - for creating a new variable in a `tibbble`/`data.frame` 
+- `count()` - for counting values of a variable in a `tibbble`/`data.frame`
+- `arrange()` - for sorting a `tibbble`/`data.frame` by one or more variables. 
+- `summarize` - for creating summarize statistics for one or more variables (grouped or ungrouped) in a `tibbble`/`data.frame`
+
+
+
+Almost all functions from the tidyverse that are used for data manipulation use **tidy evaluation**. That is, when passing a variable to one of these functions, we don't necessarily need to pass the variable as a quoted string (i.e. we write `count(data, my_variable)`, instead of `count(data, "my_variable")`). We can write our functions that have this form so that they play well with already existing `tidyverse` functions
+
+Tidy evaluation usually works in one of two ways by either using
+
+- Data Masking - Instead of writing `data[data$var1 == value1 & data$var2 == value2 & data$var 3 < value3, ]`, we can write data %>% filter(var1 == value1, var2 == value2, var3 < value3)`. That is we don't need to explicitly reference the data when referencing a variable. 
+
+- Tidy Selection - a set of tools for extracting or selecting columns form a `tibbble`/`data.frame` for further use. You will commonly see examples like: `my_data %>% select(var1)`, `my_data %>% select(2:5)`, `my_data %>% select(contains("population_")`, `my_data %>% summarize_at(vars(1:4), mean)`. 
+
+
+This short tutorial is going to show you how to use the first type of tidy evaluation (data masking). This is useful when you want to create your own functions for specific data cleaning tasks (imputation, text cleaning, standardization, etc...)
+
+
+We will use the `mtcars` data comes pre-loaded with R for this tutorial.
+
+Let's say we want to create a function that summarizes the mean value of a variable by some grouping variable. We are tired of always having to type two lines of code to `group_by` and `summarize` as follows
+
+```{r, message=F, warning=F}
+library(tidyverse)
+mtcars %>% 
+  group_by(am) %>% 
+  summarize(mean(mpg))
+
+
+```
+
+so we start by writing a function called grouped_mean:
+
+
+```{r}
+
+grouped_mean <- function(data, group_var, mean_var) {
+  result <- data %>% 
+    group_by(group_var) %>% 
+    summarize(mean(mean_var))
+  
+  return(result)
+}
+
+```
+
+Now let's try to run it to get the same result as before
+
+```{r, error=TRUE}
+
+grouped_mean(mtcars, am, mpg)
+
+```
+
+There are two ways to make this work. The first is called the `enquo()` `!!` (pronounced bang bang) cycle. The second using embracing ( that is, `{{}}`), which is a wrapper for the `enquo()` `!!` cycle.
+
+
+To start, we identify the variables we wish to `enquo()`. Let's do that and print out what it is actually doing.
+
+```{r}
+
+grouped_mean <- function(data, group_var, mean_var) {
+  
+  eq_var1 <- enquo(group_var)
+  eq_var2 <- enquo(mean_var)
+  
+  print(eq_var1)
+  print(eq_var2)
+  return(NULL)
+}
+
+grouped_mean(mtcars, am, mpg)
+```
+
+We can see that we have created what is known as a quosure. `enquo` is what is known as a defusing operator. It prevents the evaluation of any R code. So instead of trying to find our `group_var`, or `mean_var` in the environment and throwing an error as it did in our first attempt, we store these expressions as a quosure (a combination of the words quote and closure) for later use. When we wish to access these expressions in the group by or summarzing steps, we use the bang bang symbol (`!!`). 
+
+```{r}
+
+grouped_mean <- function(data, group_var, mean_var) {
+  
+  eq_var1 <- enquo(group_var)
+  eq_var2 <- enquo(mean_var)
+  
+  result <- data %>% 
+    group_by(!!eq_var1) %>% 
+    summarize(mean(!!eq_var2))
+  
+  return(result)
+}
+
+grouped_mean(mtcars, am, mpg)
+```
+
+
+Fairly straightforward. The tidyverse team has created an easy to use wrapper function so that you don't need to `enquo` and `!!` every time you want to write a function that uses tidy evaluation. This is known as embracing, and we write it using two curly braces (`{{}}`). Let's rewrite our function this way. 
+
+```{r}
+
+grouped_mean <- function(data, group_var, mean_var) {
+  result <- data %>% 
+    group_by({{group_var}}) %>% 
+    summarize(mean({{mean_var}}))
+  
+  return(result)
+}
+
+grouped_mean(mtcars, am, mpg)
+```
+
+Very simple stuff. There is one final step. Let's say we want to name our summarized variable instead of getting the default `mean(mpg)`. As it turns out, this is also very simple. We can use the curly braces within a quoted string. We just have to remember to use `:=` instead of the `=` when assigning variable names. 
+
+For example, let's have our response be mean_(whatever mean_var name is):
+
+```{r}
+
+grouped_mean <- function(data, group_var, mean_var) {
+  result <- data %>% 
+    group_by({{group_var}}) %>% 
+    summarize("mean_{{mean_var}}" := mean({{mean_var}}))
+  
+  return(result)
+}
+
+grouped_mean(mtcars, am, mpg)
+```
+
+Finally, let's say we want to include more than one more than one group by variable, or more than one variable to summarize. We can pass those variables as vectors (using `c()`) and we can summarize them by using the `across()` function.
+
+
+```{r}
+
+grouped_mean <- function(data, group_vars, mean_vars) {
+  result <- data %>% 
+    group_by(across({{ group_vars }})) %>% 
+    summarise(across({{ mean_vars }}, ~ mean(., na.rm = TRUE)))
+  
+  return(result)
+}
+
+grouped_mean(mtcars, c(vs,am), c(wt, mpg))
+```
+
+This is a technique you can use in any of your assignments when you need to write functions. 
+
+
